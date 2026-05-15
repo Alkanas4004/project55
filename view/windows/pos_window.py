@@ -438,4 +438,105 @@ class POSWindow(ctk.CTkFrame):
             points_frame = ctk.CTkFrame(payment_window, fg_color="transparent")
             points_frame.pack(pady=10, fill="x", padx=20)
             
-            ctk.CTkLabel(points_frame, text="نقاط
+            ctk.CTkLabel(points_frame, text="نقاط الولاء المتاحة:").pack(side="left")
+            ctk.CTkLabel(points_frame, text=str(self.current_customer.get('loyalty_points', 0))).pack(side="left", padx=5)
+            
+            use_points = ctk.BooleanVar(value=False)
+            ctk.CTkCheckBox(
+                points_frame, 
+                text="استخدام نقاط الولاء (100 نقطة = 1₪)",
+                variable=use_points
+            ).pack(pady=5)
+        
+        amount_frame = ctk.CTkFrame(payment_window, fg_color="transparent")
+        amount_frame.pack(pady=20, fill="x", padx=20)
+        
+        ctk.CTkLabel(amount_frame, text="المبلغ المدفوع:").pack(anchor="w")
+        paid_entry = AppStyles.create_entry(amount_frame, placeholder_text="0.00")
+        paid_entry.pack(fill="x", pady=5)
+        
+        def calculate_change(*args):
+            try:
+                paid = float(paid_entry.get() or 0)
+                total_amount = self.total - self.discount + ((self.total - self.discount) * 0.15)
+                if paid >= total_amount:
+                    change = paid - total_amount
+                    change_label.configure(text=f"الباقي: {change:.2f} ₪", text_color=AppStyles.SUCCESS_COLOR)
+                else:
+                    change_label.configure(text=f"المتبقي: {total_amount - paid:.2f} ₪", text_color=AppStyles.DANGER_COLOR)
+            except:
+                pass
+        
+        paid_entry.bind("<KeyRelease>", calculate_change)
+        
+        change_label = ctk.CTkLabel(amount_frame, text="", font=AppStyles.BODY_FONT)
+        change_label.pack(pady=5)
+        
+        def confirm_payment():
+            method = payment_method.get()
+            
+            if method == "cash":
+                try:
+                    paid_amount = float(paid_entry.get() or 0)
+                    total_amount = self.total - self.discount + ((self.total - self.discount) * 0.15)
+                    if paid_amount < total_amount:
+                        messagebox.showerror("خطأ", "المبلغ المدفوع أقل من الإجمالي")
+                        return
+                except ValueError:
+                    messagebox.showerror("خطأ", "الرجاء إدخال مبلغ صحيح")
+                    return
+            
+            points_used = 0
+            if self.current_customer and 'use_points' in locals() and use_points.get():
+                max_points_value = self.current_customer.get('loyalty_points', 0) / 100
+                points_used = min(self.current_customer.get('loyalty_points', 0), (self.total - self.discount) * 100)
+                if points_used > 0:
+                    self.customer_controller.use_loyalty_points(self.current_customer['id'], int(points_used))
+            
+            total_after_discount = self.total - self.discount
+            tax_amount = total_after_discount * 0.15
+            final_total = total_after_discount + tax_amount
+            
+            sale_data = {
+                'branch_id': self.user_data.get('branch_id'),
+                'cashier_id': self.user_data.get('id'),
+                'customer_id': self.current_customer.get('id') if self.current_customer else None,
+                'subtotal': self.total,
+                'discount': self.discount,
+                'tax': tax_amount,
+                'total': final_total,
+                'payment_method': method,
+                'loyalty_points_earned': int(final_total * 10),
+                'loyalty_points_used': int(points_used),
+                'items': self.cart
+            }
+            
+            result = self.sale_controller.create_sale(sale_data)
+            
+            if result['success']:
+                change = paid_amount - final_total if method == "cash" else 0
+                messagebox.showinfo(
+                    "نجاح",
+                    f"تمت عملية البيع بنجاح!\nرقم الفاتورة: {result['invoice_number']}\n" +
+                    (f"الباقي: {change:.2f} ₪" if change > 0 else "")
+                )
+                payment_window.destroy()
+                self.cart = []
+                self.discount = 0
+                self.current_customer = None
+                self.customer_label.configure(text="عميل: عادي")
+                self.update_cart_display()
+                self.load_products()
+            else:
+                messagebox.showerror("خطأ", f"حدث خطأ: {result.get('error', 'غير معروف')}")
+        
+        AppStyles.create_button(payment_window, text="تأكيد الدفع", command=confirm_payment, variant="success").pack(pady=20, fill="x", padx=20)
+    
+    def bind_shortcuts(self):
+        self.bind("<F1>", lambda e: self.process_payment())
+        self.bind("<F2>", lambda e: self.clear_cart())
+        self.bind("<F3>", lambda e: self.apply_discount())
+        self.bind("<Control-d>", lambda e: self.apply_discount())
+        self.bind("<Control-c>", lambda e: self.clear_cart())
+        self.bind("<Control-p>", lambda e: self.process_payment())
+        self.bind("<Control-f>", lambda e: self.search_entry.focus())
